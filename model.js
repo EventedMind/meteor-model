@@ -84,6 +84,13 @@ Model.extend = function (prototype) {
     delete prototype.collection;
   }
 
+  if (prototype.setTransform) {
+    ModelInstance.collection = prototype.setTransform;
+    ModelInstance.collection._transform = ModelInstance.newModel;
+
+    delete prototype.setTransform;
+  }
+
   if (prototype.name) {
     typeName = prototype.name;
     delete prototype.name;
