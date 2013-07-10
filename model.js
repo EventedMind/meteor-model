@@ -1,5 +1,7 @@
 // XXX Limitation: You can only extend Model, not subclasses.
 
+var root = this;
+
 var warn = function (msg) {
   if (console && console.warn)
     console.warn(msg);
@@ -46,6 +48,7 @@ Model.extend = function (prototype) {
     var args = _.toArray(arguments);
     var method;
     var methodArgs;
+    var collection;
 
     if (!ModelInstance.collection)
       throw new Error('No collection specified on this model.');
@@ -76,19 +79,21 @@ Model.extend = function (prototype) {
     ModelInstance.prototype = new Proto();
   }
 
-  if (prototype.collection) {
-    ModelInstance.collection = new Meteor.Collection(prototype.collection, {
-      transform: ModelInstance.newModel
-    });
+  if (collection = prototype.collection) {
 
+    if (typeof collection === 'string')
+      collection = root[collection];
+
+    if (collection instanceof Meteor.Collection) {
+      collection._transform = ModelInstance.newModel;
+    } else {
+      collection = new Meteor.Collection(prototype.collection, {
+        transform: ModelInstance.newModel
+      });
+    }
+
+    ModelInstance.collection = collection;
     delete prototype.collection;
-  }
-
-  if (prototype.setTransform) {
-    ModelInstance.collection = prototype.setTransform;
-    ModelInstance.collection._transform = ModelInstance.newModel;
-
-    delete prototype.setTransform;
   }
 
   if (prototype.name) {
