@@ -165,8 +165,8 @@ Model.prototype = {
     
     runCallbacks.call(this, "before", "insert");
     _id = this.constructor.insert(this.toObject());
-    runCallbacks.call(this, "after", "insert");
     this.set("_id", _id);
+    runCallbacks.call(this, "after", "insert");
     return _id;
   },
 
