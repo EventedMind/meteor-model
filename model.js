@@ -160,17 +160,16 @@ Model.prototype = {
     return this;
   },
 
-  insert: function () {
+  insert: function (cb) {
     var _id;
     
     runCallbacks.call(this, "before", "insert");
-    _id = this.constructor.insert(this.toObject());
-    this.set("_id", _id);
+    _id = this.constructor.insert(this.toObject(), cb);
     runCallbacks.call(this, "after", "insert");
     return _id;
   },
 
-  update: function (modifier) {
+  update: function (modifier, cb) {
     var doc;
     var retVal;
 
@@ -179,16 +178,15 @@ Model.prototype = {
     if (!this._id)
       throw new Error('Model has not been inserted yet');
 
-
     runCallbacks.call(this, "before", "update");
 
-    if (!modifier) {
+    if (!_.isObject(modifier)) {
       doc = this.toObject();
       delete doc._id;
       modifier = { "$set": doc };
     }
 
-    retVal = this.constructor.update(this._id, modifier);
+    retVal = this.constructor.update({_id: this._id}, modifier, cb);
     runCallbacks.call(this, "after", "update");
   },
 
@@ -212,4 +210,3 @@ Model.prototype = {
     return this;
   }
 };
-
