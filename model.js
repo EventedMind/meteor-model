@@ -86,12 +86,15 @@ Model = Class.inherit({
       , wrappedCallback;
 
     wrappedCallback = function (err, id) {
-      if (id)
+      if (id) {
         self._id = id;
+        self.sync();
+      }
 
-      self.sync();
       if (typeof args[args.length-1] === 'function')
         args[args.length-1](err, id);
+      else if (err)
+        throw err;
     };
 
     return this.class.insert.call(this.class,
@@ -156,7 +159,7 @@ Model.onBeforeInherit = function (definition) {
 
   if (collection = definition.collection) {
     if (collection instanceof Meteor.Collection) {
-      collection._transform = this.newModel;
+      collection._transform = _.bind(this.newModel, this);
     } else {
       collection = new Meteor.Collection(collection, {
         transform: _.bind(this.newModel, this)
@@ -174,7 +177,8 @@ Model.onBeforeInherit = function (definition) {
   }
 
   if (this.typeName && this.typeName() !== 'Model')
-    EJSON.addType(this.typeName(), this.fromJSONValue);
+    //XXX make sure the.fromJSONValue is bound to the class itself
+    EJSON.addType(this.typeName(), _.bind(this.fromJSONValue, this));
   else {
     warn(
       'If you want an EJSON type added you need to have a typeName property'
