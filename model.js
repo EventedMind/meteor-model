@@ -1,144 +1,54 @@
-// XXX Limitation: You can only extend Model, not subclasses.
+var capitalize = function (string) {
+  return string.charAt(0).toUpperCase() + string.substring(1).toLowerCase();
+};
 
-var root = this;
+var global = function () {
+  if (typeof window !== 'undefined')
+    return window;
+  else if (typeof global !== 'undefined')
+    return global;
+  else 
+    return null;
+};
 
 var warn = function (msg) {
   if (console && console.warn)
     console.warn(msg);
 };
 
-var runCallbacks = function (when, method) {
-  var callbacks;
-  var self = this;
-
-  if (this[when] && this[when][method]) {
-    callbacks = this[when][method];
-    callbacks = _.isArray(callbacks) ? callbacks : [callbacks];
-
-    _.each(callbacks, function (cb) {
-      cb.call(self);
-    });
-  }
-};
-
-Model = function (document, options) {
-  this.fields = [];
-  this.options = {};
-  this.configure(options);
-  this.set(document);
-};
-
-Model.extend = function (prototype) {
-  var typeName;
-  var ModelInstance;
-
-  ModelInstance = function (document) {
-    Model.prototype.constructor.call(this, document);
-  };
-
-  ModelInstance.newModel = function (document) {
-    return new ModelInstance(document);
-  };
-
-  ModelInstance.fromJSONValue = function (value) {
-    return ModelInstance.newModel(EJSON.fromJSONValue(value));
-  };
-
-  ModelInstance.proxyToCollection = function () {
-    var args = _.toArray(arguments);
-    var method;
-    var methodArgs;
-    var collection;
-
-    if (!ModelInstance.collection)
-      throw new Error('No collection specified on this model.');
-
-    if (args.length == 0) return;
-
-    method = args[0];
-    methodArgs = args.splice(1);
-
-    var thisArg = ModelInstance.collection;
-    return ModelInstance.collection[method].apply(thisArg, methodArgs);
-  };
-
-  var addProxyMethod = function (method) {
-    ModelInstance[method] = function () {
-      var args = [method].concat(_.toArray(arguments));
-      return ModelInstance.proxyToCollection.apply(this, args);
-    };
-  };
-
-  _.each(['insert', 'update', 'remove', 'find', 'findOne'], addProxyMethod);
-
-  if (Object.create)
-    ModelInstance.prototype = Object.create(Model.prototype);
-  else {
-    var Proto = function () {};
-    Proto.prototype = Model.prototype;
-    ModelInstance.prototype = new Proto();
-  }
-
-  if (collection = prototype.collection) {
-
-    if (typeof collection === 'string')
-      collection = root[collection];
-
-    if (collection instanceof Meteor.Collection) {
-      collection._transform = ModelInstance.newModel;
-    } else {
-      collection = new Meteor.Collection(prototype.collection, {
-        transform: ModelInstance.newModel
-      });
-    }
-
-    ModelInstance.collection = collection;
-    delete prototype.collection;
-  }
-
-  if (prototype.name) {
-    typeName = prototype.name;
-    delete prototype.name;
-  }
-
-  _.extend(ModelInstance.prototype, prototype, {
-    constructor: ModelInstance,
-
-    clone: function () {
-      return new ModelInstance(this.toObject());
-    },
-
-    typeName: function () {
-      return typeName;
-    }
-  });
-
-  if (typeName)
-    EJSON.addType(typeName, ModelInstance.fromJSONValue);
-  else
-    warn("If you want an EJSON type added you need to have a 'name' property");
-
-  return ModelInstance;
-};
-
-Model.prototype = {
-  constructor: Model,
+Model = Class.inherit({
+  constructor: function (doc, options) {
+    this.fields = [];
+    this.options = {};
+    this.configure(options);
+    this.set(doc);
+  },
 
   configure: function (options) {
     options = options || {};
+    this.options = this.options || {};
     _.extend(this.options, options);
     return this;
   },
 
-  toJSONValue: function () {
-    return EJSON.toJSONValue( this.toObject () );
+  typeName: function () {
+    return this.class.typeName();
   },
 
-  toObject: function () {
+  toJSONValue: function () {
+    return EJSON.toJSONValue(this.toDocument());
+  },
+
+  clone: function () {
+    return this.class.newModel(this.toDocument());
+  },
+
+  toDocument: function () {
     return _.pick(this, this.fields);
   },
-
+  
   equals: function (other) {
+    //XXX this assumes ordering
     return EJSON.stringify(this) == EJSON.stringify(other);
   },
 
@@ -156,57 +66,177 @@ Model.prototype = {
 
     this.fields = _.uniq(this.fields.concat(_.keys(attributes)));
     _.extend(this, attributes);
-
     return this;
-  },
-
-  insert: function (cb) {
-    var _id;
-    
-    runCallbacks.call(this, "before", "insert");
-    _id = this.constructor.insert(this.toObject(), cb);
-    runCallbacks.call(this, "after", "insert");
-    return _id;
-  },
-
-  update: function (modifier, cb) {
-    var doc;
-    var retVal;
-
-    // XXX id hasn't been set on the client for some reason so on the
-    // server we don't have it. need to figure out why.
-    if (!this._id)
-      throw new Error('Model has not been inserted yet');
-
-    runCallbacks.call(this, "before", "update");
-
-    if (!_.isObject(modifier)) {
-      doc = this.toObject();
-      delete doc._id;
-      modifier = { "$set": doc };
-    }
-
-    retVal = this.constructor.update({_id: this._id}, modifier, cb);
-    runCallbacks.call(this, "after", "update");
-  },
-
-  remove: function () {
-    var retVal;
-
-    if (!this._id)
-      throw new Error('Model has not been inserted yet');
-
-    runCallbacks.call(this, "before", "remove");
-    retVal = this.constructor.remove(this._id);
-    runCallbacks.call(this, "after", "remove");
   },
 
   sync: function () {
-    if (!this._id)
-      throw new Error('Model has not been inserted yet');
+    var self = this;
+    if (!self._id)
+      throw new Error('No _id set on model');
 
-    var updatedModel = this.constructor.findOne(this._id);
-    this.set(updatedModel.toJSONValue());
-    return this;
+    Deps.nonreactive(function () {
+      var doc = self.collection.findOne({_id: self._id});
+      self.set(doc);
+    });
+  },
+
+  insert: function () {
+    var self = this
+      , args = _.toArray(arguments)
+      , wrappedCallback;
+
+    wrappedCallback = function (err, id) {
+      if (id)
+        self._id = id;
+
+      self.sync();
+      if (typeof args[args.length-1] === 'function')
+        args[args.length-1](err, id);
+    };
+
+    return this.class.insert.call(this.class,
+      this.toDocument(),
+      wrappedCallback
+    );
+  },
+
+  update: function (/* [mutator, cb] */) {
+    var self = this
+      , doc = self.toDocument()
+      , mutator
+      , wrappedCallback
+      , args = _.toArray(arguments);
+
+    delete doc._id;
+
+    if (Object.prototype.toString.call(args[0]) === '[object Object]')
+      mutator = args[0];
+    else
+      mutator = { '$set': doc };
+
+    wrappedCallback = function (err) {
+      if (err)
+        throw err;
+
+      self.sync();
+
+      if (typeof args[args.length-1] === 'function')
+        args[args.length-1](err);
+    };
+
+    return this.class.update.call(this.class,
+      {_id: this._id},
+      mutator,
+      wrappedCallback
+    );
+  },
+
+  remove: function () {
+    var args = _.toArray(arguments);
+
+    return this.class.remove.apply(this.class,
+      [{_id: this._id}].concat(args)
+    );
+  },
+
+  save: function (mutator) {
+    var method = this._id ? 'update' : 'insert';
+    return this[method].apply(this, arguments);
+  }
+});
+
+Model.onBeforeInherit = function (definition) {
+  var self = this 
+    , collection
+    , before
+    , after
+    , root = global();
+
+  Class.onBeforeInherit.apply(this, arguments);
+
+  if (collection = definition.collection) {
+    if (collection instanceof Meteor.Collection) {
+      collection._transform = this.newModel;
+    } else {
+      collection = new Meteor.Collection(collection, {
+        transform: _.bind(this.newModel, this)
+      });
+    }
+
+    this.collection = collection;
+
+    // so instances get the property too
+    this.include({
+      collection: collection
+    });
+
+    delete definition.collection;
+  }
+
+  if (this.typeName && this.typeName() !== 'Model')
+    EJSON.addType(this.typeName(), this.fromJSONValue);
+  else {
+    warn(
+      'If you want an EJSON type added you need to have a typeName property'
+    );
+  }
+
+  if (before = definition.before) {
+    _.each(before, function (fn, mutatorKey) {
+      self.collection['before' + capitalize(mutatorKey)](fn);
+    });
+
+    delete definition.before;
+  }
+
+  if (after = definition.after) {
+    _.each(after, function (fn, mutatorKey) {
+      self.collection['after' + capitalize(mutatorKey)](fn);
+    });
+
+    delete definition.after;
   }
 };
+
+Model.extend({
+  newModel: function (doc, options) {
+    return new this(doc, options);
+  },
+
+  fromJSONValue: function (value) {
+    return this.newModel(EJSON.fromJSONValue(value));
+  },
+
+  proxyToCollection: function (method, args) {
+    if (!this.collection)
+      throw new Error('No collection specified on this model.');
+
+    if (!method)
+      throw new Error('What method should I proxy on the collection?');
+
+    args = _.toArray(args);
+    var thisArg = this.collection;
+
+    return this.collection[method].apply(thisArg, args);
+  },
+
+  insert: function (/* args */) {
+    return this.proxyToCollection('insert', arguments);
+  },
+
+  update: function (/* args */) {
+    return this.proxyToCollection('update', arguments);
+  },
+
+  remove: function (/* args */) {
+    return this.proxyToCollection('remove', arguments);
+  },
+
+  find: function (/* args */) {
+    return this.proxyToCollection('find', arguments);
+  },
+
+  findOne: function (/* args */) {
+    return this.proxyToCollection('findOne', arguments);
+  }
+});
